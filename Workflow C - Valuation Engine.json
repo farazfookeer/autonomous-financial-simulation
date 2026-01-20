@@ -1,0 +1,446 @@
+{
+  "name": "Workflow C - Valuation Engine",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "The Goal\nWorkflow B moved the interest rates. Workflow C answers: \"Did our pension funds lose money because of that?\"\n\nIt performs the core LDI (Liability Driven Investment) math:\n\nCalculate the Shock: How much did yields change since yesterday? (e.g., +0.05%).\n\nRevalue Debt: If yields go UP, the value of the debt goes DOWN (this is good for the fund).\n\nRevalue Assets: If yields go UP, the value of Gilts goes DOWN (this is bad for assets).\n\nRecord New Positions: Save the new values for \"Today\".**Double click** to edit me. [Guide](https://docs.n8n.io/workflows/components/sticky-notes/)",
+        "height": 448,
+        "width": 304
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -720,
+        -384
+      ],
+      "typeVersion": 1,
+      "id": "6039882f-8286-4ba4-b720-16d3c26458d3",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -272,
+        -176
+      ],
+      "id": "c144b4bd-91f0-4471-81ba-37438d8e7d57",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM sim_runs ORDER BY id DESC LIMIT 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        -80,
+        -176
+      ],
+      "id": "6f7f7d11-2cb0-47fa-a802-0e73d30215b8",
+      "name": "Get_Run_ID",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM market_daily \nWHERE run_id = {{ $('Get_Run_ID').first().json.id }} \nORDER BY date DESC \nLIMIT 2;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        128,
+        -176
+      ],
+      "id": "4841d472-eec5-46b3-abde-1a2cd0b272af",
+      "name": "Get_Market_Moves",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n    c.client_id,\n    c.name,\n    l.pv_liabilities,\n    l.pv01_liab,\n    -- Gather all assets (Cash + Gilts) into a JSON list\n    json_agg(json_build_object(\n        'asset_type', i.asset_type, \n        'quantity', i.quantity, \n        'market_price', i.market_price,\n        'isin', i.isin\n    )) as assets\nFROM clients c\n-- Join the latest Liability entry\nJOIN liabilities_daily l ON c.client_id = l.client_id \n    AND l.date = (SELECT MAX(date) FROM liabilities_daily WHERE client_id = c.client_id)\n-- Join the latest Inventory entries\nJOIN collateral_inventory i ON c.client_id = i.client_id \n    AND i.date = (SELECT MAX(date) FROM collateral_inventory WHERE client_id = c.client_id)\nWHERE c.sim_run_id = {{ $('Get_Run_ID').first().json.id }}\nGROUP BY c.client_id, c.name, l.pv_liabilities, l.pv01_liab;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        336,
+        -176
+      ],
+      "id": "b2c385e8-0198-47e3-bf26-9b75d7e8bac9",
+      "name": "Get_Portfolios",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. CALCULATE MARKET MOVE\nconst market_data = $('Get_Market_Moves').all().map(i => i.json);\n\n// Safety: If we don't have 2 days of history, we can't calculate change.\nif (market_data.length < 2) return [];\n\nconst today = market_data[0];\nconst yesterday = market_data[1];\n\n// Calculate Yield Change in bps (e.g., 0.05% = 5 bps)\nconst yield_change_pct = (today.nominal_yield_10y - yesterday.nominal_yield_10y) / 100;\nconst bps_change = (today.nominal_yield_10y - yesterday.nominal_yield_10y) * 100;\n\nconst new_date = today.date;\n\n// 2. REVALUE CLIENTS\nconst clients = items.map(i => i.json);\nlet new_liabilities = [];\nlet new_inventory = [];\n\nfor (const c of clients) {\n    // --- A. Revalue Liabilities ---\n    // Formula: New PV = Old PV - (PV01 * BpsChange)\n    // If yields rise (+), Value falls (-).\n    const liab_impact = c.pv01_liab * bps_change; \n    const new_liab_pv = parseFloat(c.pv_liabilities) - liab_impact;\n\n    new_liabilities.push({\n        date: new_date,\n        client_id: c.client_id,\n        pv_liabilities: new_liab_pv.toFixed(2),\n        pv01_liab: c.pv01_liab \n    });\n\n    // --- B. Revalue Assets ---\n    for (const asset of c.assets) {\n        let new_price = parseFloat(asset.market_price);\n\n        if (asset.asset_type === 'GILT') {\n            // Simulating Gilt Price drop similar to liabilities\n            // Approx Duration ~20 years\n            const duration = 20; \n            const price_impact_pct = duration * yield_change_pct;\n            new_price = new_price * (1 - price_impact_pct);\n        }\n        // CASH price stays 1.0\n\n        new_inventory.push({\n            date: new_date,\n            client_id: c.client_id,\n            asset_type: asset.asset_type,\n            isin: asset.isin,\n            quantity: asset.quantity,\n            market_price: new_price.toFixed(4),\n            haircut: 0.0\n        });\n    }\n}\n\nreturn {\n    json: {\n        liabilities: new_liabilities,\n        inventory: new_inventory\n    }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        544,
+        -176
+      ],
+      "id": "8fc2b3ae-063b-464e-aca2-75d4a42e6144",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "liabilities_daily",
+          "mode": "list",
+          "cachedResultName": "liabilities_daily"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "pv_liabilities": "={{ $json.pv_liabilities }}",
+            "pv01_liab": "={{ $json.pv01_liab }}",
+            "date": "={{ $json.date }}",
+            "client_id": "={{ $json.client_id }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "client_id",
+              "displayName": "client_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pv_liabilities",
+              "displayName": "pv_liabilities",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "pv01_liab",
+              "displayName": "pv01_liab",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        944,
+        -368
+      ],
+      "id": "46188a4c-d68d-45dd-b6b6-21c2fb96d2a2",
+      "name": "Store_Liabilities",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "liabilities",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        736,
+        -368
+      ],
+      "id": "e1747a87-86f4-4cc9-93d3-08998c64b14b",
+      "name": "Split_Out_Liabilities"
+    },
+    {
+      "parameters": {
+        "fieldToSplitOut": "inventory",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.splitOut",
+      "typeVersion": 1,
+      "position": [
+        736,
+        0
+      ],
+      "id": "dcdd39eb-1144-4e91-9c4c-f9cc888535b5",
+      "name": "Split_Out_Collateral_Inventory"
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "collateral_inventory",
+          "mode": "list",
+          "cachedResultName": "collateral_inventory"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "quantity": "={{ $json.quantity }}",
+            "market_price": "={{ $json.market_price }}",
+            "haircut": "={{ $json.haircut }}",
+            "date": "={{ $json.date }}",
+            "client_id": "={{ $json.client_id }}",
+            "asset_type": "={{ $json.asset_type }}",
+            "isin": "={{ $json.isin }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "client_id",
+              "displayName": "client_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "asset_type",
+              "displayName": "asset_type",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "isin",
+              "displayName": "isin",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "quantity",
+              "displayName": "quantity",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "market_price",
+              "displayName": "market_price",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "haircut",
+              "displayName": "haircut",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        944,
+        0
+      ],
+      "id": "8fe481bc-1e6d-4398-9511-ed839826e1c2",
+      "name": "Store_Collateral_Inventory",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get_Run_ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Run_ID": {
+      "main": [
+        [
+          {
+            "node": "Get_Market_Moves",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Market_Moves": {
+      "main": [
+        [
+          {
+            "node": "Get_Portfolios",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Portfolios": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Split_Out_Liabilities",
+            "type": "main",
+            "index": 0
+          },
+          {
+            "node": "Split_Out_Collateral_Inventory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split_Out_Liabilities": {
+      "main": [
+        [
+          {
+            "node": "Store_Liabilities",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Split_Out_Collateral_Inventory": {
+      "main": [
+        [
+          {
+            "node": "Store_Collateral_Inventory",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "28cf170c-0625-4074-8176-e00fc88af022",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "44b5cee6fe078e7389aac112ea92d8dddb9295fb009c9ee97e76e07cd8c30280"
+  },
+  "id": "1X9xQ0d_Eah3_eTqUihIW",
+  "tags": []
+}

@@ -1,0 +1,281 @@
+{
+  "name": "Workflow B - Market Generator",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        -224,
+        0
+      ],
+      "id": "9ae6bde7-5a6e-4348-b21a-cbf0b8d3c038",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM sim_runs ORDER BY id DESC LIMIT 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        0,
+        0
+      ],
+      "id": "27b1028c-f536-4ad7-995b-30256a6a98b4",
+      "name": "Get_Run_ID",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT date, nominal_yield_10y \nFROM market_daily \nWHERE run_id = {{ $('Get_Run_ID').first().json.id }} \nORDER BY date DESC LIMIT 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        224,
+        0
+      ],
+      "id": "f839a062-2164-4ffe-b8a4-8cb735f9e465",
+      "name": "Get_Last_Market_Data",
+      "alwaysOutputData": true,
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "// 1. GET INPUTS\nconst run_id = $('Get_Run_ID').first().json.id; \nconst last_data_items = $('Get_Last_Market_Data').all();\n\n// Default values (Day 1)\nlet last_date = new Date('2025-01-01');\nlet last_yield = 4.50; \n\nif (last_data_items.length > 0 && last_data_items[0].json.date) {\n    last_date = new Date(last_data_items[0].json.date);\n    last_yield = parseFloat(last_data_items[0].json.nominal_yield_10y);\n}\n\n// -------------------------------------------------------------\n// 2. DEEP SEARCH PARSING (The Nuclear Option)\n// -------------------------------------------------------------\nconst root = items[0].json;\n\n// Recursive function to hunt for the JSON string anywhere\nfunction findHeadlineJSON(obj) {\n    if (!obj) return null;\n    \n    // If it's a string, check if it contains our target keywords\n    if (typeof obj === 'string') {\n        if (obj.includes('headline') && obj.includes('sentiment_score')) {\n            return obj;\n        }\n        return null;\n    }\n    \n    // If it's an array or object, dig deeper\n    if (typeof obj === 'object') {\n        for (const key in obj) {\n            const found = findHeadlineJSON(obj[key]);\n            if (found) return found;\n        }\n    }\n    return null;\n}\n\n// Run the search\nlet raw_text = findHeadlineJSON(root) || \"{}\";\n\n// Safety: Ensure it is a string before cleaning\nif (typeof raw_text !== 'string') {\n    raw_text = JSON.stringify(raw_text);\n}\n\n// CLEANUP: Remove Markdown code blocks (```json ... ```)\nconst clean_text = raw_text.replace(/```json/g, '').replace(/```/g, '').trim();\n\nlet ai_json = {};\ntry {\n    ai_json = JSON.parse(clean_text);\n} catch (e) {\n    console.log(\"Parsing Failed. Raw text was:\", raw_text);\n    ai_json = { \n        headline: \"Market steady (Parsing fallback)\", \n        sentiment_score: 0 \n    };\n}\n// -------------------------------------------------------------\n\n// 3. CALCULATE NEXT DAY\nconst next_date = new Date(last_date);\nnext_date.setDate(last_date.getDate() + 1);\n\n// 4. CALCULATE YIELD\nconst noise = (Math.random() * 4) - 2; \nconst sentiment = ai_json.sentiment_score !== undefined ? ai_json.sentiment_score : 0;\nconst move_bps = (sentiment * 1.5) + noise;\n\nlet new_yield = last_yield + (move_bps / 100);\nnew_yield = Math.round(new_yield * 10000) / 10000;\n\n// Determine Regime\nlet regime = 'CALM';\nif (sentiment > 6) regime = 'INFLATION_SPIKE';\nif (sentiment < -6) regime = 'FLIGHT_TO_SAFETY';\n\nreturn {\n    json: {\n        run_id: run_id,\n        date: next_date.toISOString().split('T')[0],\n        regime: regime,\n        nominal_yield_10y: new_yield,\n        narrative_summary: ai_json.headline || \"Daily Market Update\"\n    }\n};"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        752,
+        0
+      ],
+      "id": "5b8786c2-3b4d-493c-b00e-c1e2ea2a87f4",
+      "name": "Market Maths"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "Generate a JSON object for the UK market news: { \"headline\": \"...\", \"sentiment_score\": 0 }. Return valid JSON only."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        416,
+        0
+      ],
+      "id": "5736296a-6a89-4e49-bb53-47f7ec2697b8",
+      "name": "Simulate Market News",
+      "credentials": {
+        "openAiApi": {
+          "id": "wXHENDB3pRQjVrXU",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "market_daily",
+          "mode": "list",
+          "cachedResultName": "market_daily"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "nominal_yield_10y": "={{ $json.nominal_yield_10y }}",
+            "run_id": "={{ $json.run_id }}",
+            "date": "={{ $json.date }}",
+            "regime": "={{ $json.regime }}",
+            "narrative_summary": "={{ $json.narrative_summary }}"
+          },
+          "matchingColumns": [],
+          "schema": [
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": true,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "regime",
+              "displayName": "regime",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "nominal_yield_10y",
+              "displayName": "nominal_yield_10y",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "narrative_summary",
+              "displayName": "narrative_summary",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        800,
+        272
+      ],
+      "id": "5bf89bad-6ba7-4ff8-a459-ad64791ea60a",
+      "name": "Save Market Data",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "**Workflow B moves interest rates due to simulated market conditions**",
+        "height": 96,
+        "width": 224
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -336,
+        192
+      ],
+      "typeVersion": 1,
+      "id": "79c5b40f-b9b8-4f55-8dfa-e93cb09dae49",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get_Run_ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Run_ID": {
+      "main": [
+        [
+          {
+            "node": "Get_Last_Market_Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Last_Market_Data": {
+      "main": [
+        [
+          {
+            "node": "Simulate Market News",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Market Maths": {
+      "main": [
+        [
+          {
+            "node": "Save Market Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Simulate Market News": {
+      "main": [
+        [
+          {
+            "node": "Market Maths",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "9a3b1a27-cebb-43b4-a99b-ef5ceaf148a7",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "44b5cee6fe078e7389aac112ea92d8dddb9295fb009c9ee97e76e07cd8c30280"
+  },
+  "id": "Mv8Brf2mTa88_w7pc5Lcg",
+  "tags": []
+}

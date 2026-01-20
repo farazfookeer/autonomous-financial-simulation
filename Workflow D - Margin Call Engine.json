@@ -1,0 +1,340 @@
+{
+  "name": "Workflow D - Margin Call Engine",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "4aa333a0-00f5-42bb-a9fd-9e660a7a54da",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "content": "Now comes the \"Game\" part of the simulation. If a client loses too much money, they get a Margin Call.\n\nWe will build Workflow D: The Margin Engine.\n\nThis is where we introduce your second AI Agent: \"Mike\" (Head of Operations). Mike's job is to look for clients who are \"underwater\" (Assets < Liabilities) and write them aggressive emails demanding cash."
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -320,
+        -32
+      ],
+      "typeVersion": 1,
+      "id": "eee1a9f8-c49a-41f7-8a62-06d477664cd1",
+      "name": "Sticky Note"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT id FROM sim_runs ORDER BY id DESC LIMIT 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        208,
+        0
+      ],
+      "id": "d6363d21-7593-421d-a129-f6ecc10e3f12",
+      "name": "Get_Run_ID",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT \n    l.date,\n    c.client_id,\n    c.name,\n    l.pv_liabilities,\n    SUM(i.quantity * i.market_price) as total_assets\nFROM clients c\nJOIN liabilities_daily l ON c.client_id = l.client_id \n    AND l.date = (SELECT MAX(date) FROM liabilities_daily WHERE client_id = c.client_id)\nJOIN collateral_inventory i ON c.client_id = i.client_id \n    AND i.date = (SELECT MAX(date) FROM collateral_inventory WHERE client_id = c.client_id)\nWHERE c.sim_run_id = {{ $('Get_Run_ID').first().json.id }}\nGROUP BY l.date, c.client_id, c.name, l.pv_liabilities;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        416,
+        0
+      ],
+      "id": "00bdedea-21e8-4e6a-88a2-2ed70d15be5f",
+      "name": "Check_Health",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "content": "We need to see who is broke. This query sums up everyone's assets and compares them to their liabilities for the latest date."
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        352,
+        160
+      ],
+      "typeVersion": 1,
+      "id": "72d22334-8558-4bc0-9e83-6970e8c353db",
+      "name": "Sticky Note1"
+    },
+    {
+      "parameters": {
+        "jsCode": "const clients = items.map(i => i.json);\nconst run_id = $('Get_Run_ID').first().json.id;\n\nlet bad_clients = [];\n\nfor (const c of clients) {\n    const assets = parseFloat(c.total_assets);\n    const liabs = parseFloat(c.pv_liabilities);\n    \n    // Calculate Funding Level\n    // Safety check: Avoid dividing by zero\n    const ratio = liabs > 0 ? (assets / liabs) * 100 : 100;\n    \n    // RULE: If Funding < 100%, ISSUE MARGIN CALL\n    if (ratio < 500.0) {\n        const shortfall = liabs - assets;\n        bad_clients.push({\n            run_id: run_id,\n            date: c.date,\n            client_id: c.client_id,\n            client_name: c.name,\n            funding_level_pct: ratio.toFixed(2),\n            call_amount: shortfall.toFixed(2)\n        });\n    }\n}\n\n// FIX: Convert the array of bad clients into n8n Item format\n// Each client becomes its own separate item in the workflow\nreturn bad_clients.map(client => ({ json: client }));"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "a70f5428-afce-4e8b-bd5e-268ebcb14f63",
+      "name": "Code in JavaScript"
+    },
+    {
+      "parameters": {
+        "content": "Funding level set to 500% for testing change back to 100%",
+        "height": 80
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        560,
+        -128
+      ],
+      "typeVersion": 1,
+      "id": "b4b83a5f-60a9-4ed4-b93d-a9fb0d46ef2b",
+      "name": "Sticky Note2"
+    },
+    {
+      "parameters": {
+        "modelId": {
+          "__rl": true,
+          "value": "gpt-4o-mini",
+          "mode": "list",
+          "cachedResultName": "GPT-4O-MINI"
+        },
+        "responses": {
+          "values": [
+            {
+              "role": "system",
+              "content": "You are \"Mike\", a stressed and aggressive Operations Manager at a London Clearing House. Write a short, terse email to the client demanding immediate payment of the margin call. Use British financial slang (e.g., \"Sort it out,\" \"Cash by close of play\")."
+            },
+            {
+              "content": "=Client: {{ $json.client_name }} Shortfall: £{{ $json.call_amount }} Funding Level: {{ $json.funding_level_pct }}% Write the email text."
+            }
+          ]
+        },
+        "builtInTools": {},
+        "options": {}
+      },
+      "type": "@n8n/n8n-nodes-langchain.openAi",
+      "typeVersion": 2.1,
+      "position": [
+        832,
+        0
+      ],
+      "id": "9a89d83c-55cb-4509-9cd4-1a6b0b4f506c",
+      "name": "Mike - Head of Ops",
+      "credentials": {
+        "openAiApi": {
+          "id": "wXHENDB3pRQjVrXU",
+          "name": "OpenAi account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "schema": {
+          "__rl": true,
+          "mode": "list",
+          "value": "public"
+        },
+        "table": {
+          "__rl": true,
+          "value": "margin_calls",
+          "mode": "list",
+          "cachedResultName": "margin_calls"
+        },
+        "columns": {
+          "mappingMode": "defineBelow",
+          "value": {
+            "run_id": "={{ $('Code in JavaScript').item.json.run_id }}",
+            "funding_level_pct": "={{ $('Code in JavaScript').item.json.funding_level_pct }}",
+            "call_amount": "={{ $('Code in JavaScript').item.json.call_amount }}",
+            "date": "={{ $('Code in JavaScript').item.json.date }}",
+            "client_id": "={{ $('Code in JavaScript').item.json.client_id }}",
+            "ai_message": "={{ $json.output[0].content[0].text }}",
+            "status": "={{ $json.output[0].status }}"
+          },
+          "matchingColumns": [
+            "id"
+          ],
+          "schema": [
+            {
+              "id": "id",
+              "displayName": "id",
+              "required": false,
+              "defaultMatch": true,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true,
+              "removed": true
+            },
+            {
+              "id": "run_id",
+              "displayName": "run_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "date",
+              "displayName": "date",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "dateTime",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "client_id",
+              "displayName": "client_id",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "funding_level_pct",
+              "displayName": "funding_level_pct",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "call_amount",
+              "displayName": "call_amount",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "number",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "status",
+              "displayName": "status",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            },
+            {
+              "id": "ai_message",
+              "displayName": "ai_message",
+              "required": false,
+              "defaultMatch": false,
+              "display": true,
+              "type": "string",
+              "canBeUsedToMatch": true
+            }
+          ],
+          "attemptToConvertTypes": false,
+          "convertFieldsToString": false
+        },
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        1184,
+        0
+      ],
+      "id": "b008d144-6f44-435e-b979-cac3853eba54",
+      "name": "Save_Margin_Call_Emails",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Get_Run_ID",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Run_ID": {
+      "main": [
+        [
+          {
+            "node": "Check_Health",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Check_Health": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Mike - Head of Ops",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mike - Head of Ops": {
+      "main": [
+        [
+          {
+            "node": "Save_Margin_Call_Emails",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "b5ad0c4d-ecff-4961-87bf-11a380e7886a",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "44b5cee6fe078e7389aac112ea92d8dddb9295fb009c9ee97e76e07cd8c30280"
+  },
+  "id": "O3n5yfyPSf6g-7v74M2Er",
+  "tags": []
+}

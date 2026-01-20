@@ -1,0 +1,63 @@
+{
+  "name": "Workflow Z - Reset Simulation",
+  "nodes": [
+    {
+      "parameters": {},
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "42682c2b-3ec3-4616-baf2-4ed84286dcac",
+      "name": "When clicking ‘Execute workflow’"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "-- 1. Wipe all data tables.\n-- The order usually matters, but CASCADE handles the foreign key links for us.\nTRUNCATE TABLE \n    trades, \n    margin_calls, \n    collateral_inventory, \n    liabilities_daily, \n    market_daily, \n    clients, \n    sim_runs \nCASCADE;\n\n-- 2. Reset the ID counters to 1.\n-- This ensures your next run starts at Run ID 1, Client ID 1, etc.\n-- Note: If you get an error that a sequence \"does not exist\", \n-- it just means that table uses a different ID method. \n-- These are the standard defaults for SERIAL columns.\nALTER SEQUENCE IF EXISTS sim_runs_id_seq RESTART WITH 1;\nALTER SEQUENCE IF EXISTS trades_id_seq RESTART WITH 1;\nALTER SEQUENCE IF EXISTS margin_calls_id_seq RESTART WITH 1;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        176,
+        0
+      ],
+      "id": "44cb6326-ed85-4b4f-a80f-d427131eb420",
+      "name": "Truncate_All_Tables",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "When clicking ‘Execute workflow’": {
+      "main": [
+        [
+          {
+            "node": "Truncate_All_Tables",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "c8c5ba38-6ef8-42bb-ae74-a688f1e621a0",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "44b5cee6fe078e7389aac112ea92d8dddb9295fb009c9ee97e76e07cd8c30280"
+  },
+  "id": "U6mS7YvMqKQtZgI5FN5Bu",
+  "tags": []
+}

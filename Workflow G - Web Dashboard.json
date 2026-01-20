@@ -1,0 +1,166 @@
+{
+  "name": "Workflow G - Web Dashboard",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "dashboard",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2.1,
+      "position": [
+        0,
+        0
+      ],
+      "id": "713b3bfe-8fe2-4cc4-89f8-f5d1cf5e5545",
+      "name": "Webhook",
+      "webhookId": "daa8904e-fd11-455e-abc9-1bfee758d28f"
+    },
+    {
+      "parameters": {
+        "operation": "executeQuery",
+        "query": "SELECT * FROM dashboard_master;",
+        "options": {}
+      },
+      "type": "n8n-nodes-base.postgres",
+      "typeVersion": 2.6,
+      "position": [
+        208,
+        0
+      ],
+      "id": "4151f841-e874-42a9-aaa0-bcb57e24aa4b",
+      "name": "Get_Data",
+      "credentials": {
+        "postgres": {
+          "id": "JY9F4YJ8bl6F2Bop",
+          "name": "Postgres account"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "jsCode": "const rows = items.map(i => i.json);\n\n// Extract columns for the chart\nconst labels = rows.map(r => r.date.toString().split('T')[0]); // Dates\nconst yields = rows.map(r => r.Yield);\nconst funding = rows.map(r => parseFloat(r.Funding_Level).toFixed(2));\n\n// Construct the QuickChart URL config\nconst chartConfig = {\n  type: 'line',\n  data: {\n    labels: labels,\n    datasets: [\n      {\n        label: 'Avg Funding Level (%)',\n        borderColor: 'rgb(75, 192, 192)',\n        data: funding,\n        fill: false,\n        yAxisID: 'y-axis-1',\n      },\n      {\n        label: 'Gilt Yield (%)',\n        borderColor: 'rgb(255, 99, 132)',\n        data: yields,\n        fill: false,\n        yAxisID: 'y-axis-2',\n      }\n    ]\n  },\n  options: {\n    scales: {\n      yAxes: [\n        { id: 'y-axis-1', type: 'linear', position: 'left', ticks: { min: 50, max: 150 } },\n        { id: 'y-axis-2', type: 'linear', position: 'right', ticks: { min: 0, max: 10 } }\n      ]\n    }\n  }\n};\n\nreturn { json: { chart_url: `https://quickchart.io/chart?c=${encodeURIComponent(JSON.stringify(chartConfig))}` } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        416,
+        0
+      ],
+      "id": "674f791e-ed2f-4aa1-bbee-20ff063a3670",
+      "name": "Code in JavaScript",
+      "disabled": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const chartUrl = items[0].json.chart_url;\n\n// Get stats from the previous node (Get_Data)\n// We reach back to the Postgres node to get the raw table data\nconst data = $('Get_Data').all().map(i => i.json);\n\n// Create Table Rows HTML\nlet tableRows = data.map(r => `\n    <tr>\n        <td>${r.date.toString().split('T')[0]}</td>\n        <td>${r.Yield}%</td>\n        <td>${parseFloat(r.Funding_Level).toFixed(2)}%</td>\n        <td>${r.Margin_Calls}</td>\n        <td>${r.Trades}</td>\n    </tr>\n`).join('');\n\nconst html = `\n<!DOCTYPE html>\n<html>\n<head>\n    <title>Simulation Dashboard</title>\n    <style>\n        body { font-family: sans-serif; padding: 20px; background: #f4f4f9; }\n        .container { max-width: 900px; margin: 0 auto; background: white; padding: 20px; border-radius: 8px; box-shadow: 0 2px 5px rgba(0,0,0,0.1); }\n        h1 { color: #333; }\n        img { max-width: 100%; height: auto; border: 1px solid #ddd; border-radius: 4px; }\n        table { width: 100%; border-collapse: collapse; margin-top: 20px; }\n        th, td { padding: 10px; border-bottom: 1px solid #ddd; text-align: left; }\n        th { background-color: #f8f8f8; }\n        tr:hover { background-color: #f1f1f1; }\n    </style>\n</head>\n<body>\n    <div class=\"container\">\n        <h1>🛡️ LDI Risk Simulation Dashboard</h1>\n        <p><strong>Current Status:</strong> Running</p>\n        <hr>\n        <h3>Performance vs. Rates</h3>\n        <img src=\"${chartUrl}\" alt=\"Simulation Chart\" />\n\n        <h3>Daily Logs</h3>\n        <table>\n            <thead>\n                <tr>\n                    <th>Date</th>\n                    <th>Yield (%)</th>\n                    <th>Funding (%)</th>\n                    <th>⚠️ Margin Calls</th>\n                    <th>🤖 Sarah's Trades</th>\n                </tr>\n            </thead>\n            <tbody>\n                ${tableRows}\n            </tbody>\n        </table>\n    </div>\n</body>\n</html>\n`;\n\nreturn { json: { html_content: html } };"
+      },
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        624,
+        0
+      ],
+      "id": "0125eac8-0add-4723-b947-7d2b1cfb74ca",
+      "name": "Code in JavaScript1"
+    },
+    {
+      "parameters": {
+        "respondWith": "text",
+        "responseBody": "={{ $json.html_content }}",
+        "options": {
+          "responseHeaders": {
+            "entries": [
+              {
+                "name": "Content-Type",
+                "value": "text/html"
+              }
+            ]
+          }
+        }
+      },
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.5,
+      "position": [
+        832,
+        0
+      ],
+      "id": "23ff058e-97e9-406f-8706-0a568f24daf9",
+      "name": "Respond to Webhook"
+    },
+    {
+      "parameters": {
+        "content": "How to use?\nClick execute workflow and then paste this URL into the browser: http://localhost:5678/webhook-test/dashboard",
+        "height": 176
+      },
+      "type": "n8n-nodes-base.stickyNote",
+      "position": [
+        -256,
+        96
+      ],
+      "typeVersion": 1,
+      "id": "952c13bc-7f5e-4f82-b5f7-3a9b925c1ba8",
+      "name": "Sticky Note"
+    }
+  ],
+  "pinData": {},
+  "connections": {
+    "Webhook": {
+      "main": [
+        [
+          {
+            "node": "Get_Data",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Get_Data": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript": {
+      "main": [
+        [
+          {
+            "node": "Code in JavaScript1",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Code in JavaScript1": {
+      "main": [
+        [
+          {
+            "node": "Respond to Webhook",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "active": false,
+  "settings": {
+    "executionOrder": "v1",
+    "availableInMCP": false
+  },
+  "versionId": "0a505d63-23db-4f94-8199-f9482444b8b3",
+  "meta": {
+    "templateCredsSetupCompleted": true,
+    "instanceId": "44b5cee6fe078e7389aac112ea92d8dddb9295fb009c9ee97e76e07cd8c30280"
+  },
+  "id": "fXmuzrpcxlMFPCqDwQn71",
+  "tags": []
+}
