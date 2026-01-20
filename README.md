@@ -79,8 +79,6 @@ The system includes a self-hosted live dashboard (Workflow G) visualizing:
 * Daily logs of Agent Sarah's trade rationales.
 * Total insolvency events avoided.
 
-*(Insert Screenshot of your Dashboard Here)*
-
 ---
 
 ## 🛠 Tech Stack
