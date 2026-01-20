@@ -6,7 +6,7 @@ I have structured it to highlight the **enterprise value** of the system, positi
 
 ---
 
-# Autonomous AI Risk Engine: Multi-Agent Financial Simulation
+# Simulated AI-Powered Liabilities Driven Investment Management Company 
 
 ## 📉 Overview
 
